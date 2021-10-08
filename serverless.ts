@@ -8,6 +8,9 @@ import schedulingEvents from '@functions/schedulingEvents';
 import challengeEvents from '@functions/challengeEvents';
 import webinarRedirect from '@functions/webinarRedirect';
 import massUpdate from '@functions/massUpdate';
+import webinarProcessing from '@functions/webinarProcessing';
+import webinarEvents from '@functions/webinarEvents';
+import formEvents from '@functions/formEvents';
 
 const serverlessConfiguration: AWS = {
   service: 'smoothstack-careers-api',
@@ -56,6 +59,9 @@ const serverlessConfiguration: AWS = {
     schedulingEvents,
     challengeEvents,
     massUpdate,
+    webinarProcessing,
+    webinarEvents,
+    formEvents,
   },
   resources: {
     Resources: {
@@ -63,6 +69,12 @@ const serverlessConfiguration: AWS = {
         Type: 'AWS::SNS::Topic',
         Properties: {
           TopicName: 'smoothstack-challenge-generation-sns-topic',
+        },
+      },
+      WebinarProcessingTopic: {
+        Type: 'AWS::SNS::Topic',
+        Properties: {
+          TopicName: 'smoothstack-webinar-processing-sns-topic',
         },
       },
     },
