@@ -67,20 +67,24 @@ export const findCandidateByEmail = async (url: string, BhRestToken: string, ema
   return undefined;
 };
 
-export const findActiveCandidates = async (url: string, BhRestToken: string, startIndex: number): Promise<any> => {
+export const findCandidates = async (url: string, BhRestToken: string, startIndex: number): Promise<any> => {
   const candidateQueryUrl = `${url}search/Candidate`;
+  const activeClause = 'status:"New Lead" OR status:Active';
+  const rejectedClause = 'status:Rejected';
+  const snoozeClause = 'status:Snooze';
   const { data } = await axios.get(candidateQueryUrl, {
     params: {
       BhRestToken,
-      fields: 'status,id,firstName,lastName,phone,email,customTextBlock3',
-      query: `isDeleted:0  AND (status:"New Lead" OR status:Active) AND NOT customTextBlock3:([0 TO 9] [a TO z])`,
+      fields: 'status,id,firstName,lastName,phone,email,customText25,customTextBlock6',
+      query: `isDeleted:0  AND (${snoozeClause}) AND NOT customTextBlock6:([0 TO 9] [a TO z])`,
       count: '500',
       start: startIndex,
     },
   });
 
-  return { recordCount: data.total, activeCandidates: data.data };
+  return { recordCount: data.total, candidates: data.data };
 };
+
 
 export const saveCandidateFields = async (url: string, BhRestToken: string, candidateId:string, updateData: any) => {
   const candidateUrl = `${url}entity/Candidate/${candidateId}`;
