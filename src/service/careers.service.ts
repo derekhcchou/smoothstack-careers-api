@@ -4,7 +4,7 @@ import { Appointment } from 'src/model/Appointment';
 import { Candidate } from 'src/model/Candidate';
 import { CandidateExtraFields } from 'src/model/CandidateExtraFields';
 import { ChallengeSession } from 'src/model/ChallengeEvent';
-import { PrescreenForm } from 'src/model/Form';
+import { FormEntry, PrescreenForm, TechScreenForm } from 'src/model/Form';
 import { JobOrder } from 'src/model/JobOrder';
 import { SchedulingType } from 'src/model/SchedulingType';
 import { WebinarRegistration } from 'src/model/WebinarRegistration';
@@ -31,15 +31,16 @@ export const fetchCandidate = async (url: string, BhRestToken: string, candidate
   const { data } = await axios.get(candidatesUrl, {
     params: {
       BhRestToken,
-      fields: 'id,firstName,lastName,email,phone,customText9,customText25',
+      fields: 'id,firstName,lastName,email,phone,customText9,customText25,customText6',
     },
   });
 
-  const { customText9, customText25, ...candidate } = data.data;
+  const { customText9, customText25, customText6, ...candidate } = data.data;
   return {
     ...candidate,
     challengeLink: customText9,
     relocation: customText25,
+    githubLink: customText6,
   };
 };
 
@@ -48,7 +49,8 @@ export const findCandidateByEmail = async (url: string, BhRestToken: string, ema
   const { data } = await axios.get(candidateQueryUrl, {
     params: {
       BhRestToken,
-      fields: 'id,firstName,lastName,email,submissions(id,status),customText9,customTextBlock4,customText36',
+      fields:
+        'id,firstName,lastName,email,submissions(id,status,dateAdded),webResponses(id,dateAdded),customText9,customTextBlock4,customText36',
       query: `email:${email}`,
       count: '1',
     },
@@ -62,6 +64,34 @@ export const findCandidateByEmail = async (url: string, BhRestToken: string, ema
       webinarLink: customTextBlock4,
       webinarRegistrantId: customText36,
       submissions: candidate.submissions.data,
+      webResponses: candidate.webResponses.data,
+    };
+  }
+  return undefined;
+};
+
+export const findCandidateByEmailOrPhone = async (
+  url: string,
+  BhRestToken: string,
+  email: string,
+  phone: string
+): Promise<Candidate> => {
+  const candidateQueryUrl = `${url}search/Candidate`;
+  const { data } = await axios.get(candidateQueryUrl, {
+    params: {
+      BhRestToken,
+      fields: 'id,firstName,lastName,email,phone,submissions(id,status,dateAdded),webResponses(id,dateAdded)',
+      query: `email:${email} OR phone:${phone}`,
+      count: '1',
+    },
+  });
+
+  if (data.data.length) {
+    const candidate = data.data[0];
+    return {
+      ...candidate,
+      submissions: candidate.submissions.data,
+      webResponses: candidate.webResponses.data,
     };
   }
   return undefined;
@@ -193,7 +223,9 @@ export const savePrescreenData = async (
     ...(prescreenForm.canCommit?.answer && { customText24: prescreenForm.canCommit.answer }),
     ...(prescreenForm.referral?.answer && { source: prescreenForm.referral.answer }),
     ...(prescreenForm.opportunityRank?.answer && { customText23: prescreenForm.opportunityRank.answer }),
-    ...(prescreenForm.communicationSkills?.answer && { customText14: prescreenForm.communicationSkills.answer }),
+    ...(prescreenForm.communicationSkills?.answer && {
+      customText14: prescreenForm.communicationSkills.answer.split('-')[0].trim(),
+    }),
     ...(prescreenForm.isVaccinated?.answer && { customText8: prescreenForm.isVaccinated.answer }),
     ...(prescreenForm.githubLink?.answer && { customText6: prescreenForm.githubLink.answer }),
     ...(prescreenForm.linkedinLink?.answer && { customText5: prescreenForm.linkedinLink.answer }),
@@ -219,6 +251,121 @@ const isGraduatingWithin4Months = (graduationDate: Date) => {
   diff /= 60 * 60 * 24 * 7 * 4;
   const result = Math.abs(Math.round(diff));
   return result <= 4 ? 'Yes' : 'No';
+};
+
+export const saveTechScreenData = async (
+  url: string,
+  BhRestToken: string,
+  candidateId: number,
+  techScreenForm: TechScreenForm
+): Promise<string> => {
+  const candidateUrl = `${url}entity/Candidate/${candidateId}`;
+  const screenerDetermination = techScreenForm.screenerRecommendation.answer.split('-')[0];
+  const determinationReason = techScreenForm.screenerRecommendation.answer.split('-')[1];
+  const candidateStatus = ['Pass', 'SE Recommendation'].includes(screenerDetermination)
+    ? 'Active'
+    : screenerDetermination === 'Fail' && 'Rejected';
+  const technicalResult = techScreenForm.technicalQuestions
+    ? calculateSectionResult(techScreenForm.technicalQuestions, [0.8, 0.6, 0])
+    : 'No Pass';
+  const behavioralResult = techScreenForm.behavioralQuestions
+    ? calculateSectionResult(techScreenForm.behavioralQuestions, [0.75, 0.5, 0])
+    : 'No Pass';
+  const projectResult = techScreenForm.projectQuestions
+    ? calculateSectionResult(techScreenForm.projectQuestions, [0.83, 0.5, 0])
+    : 'No Pass';
+  const calcResult = getCalculatedResult(technicalResult, behavioralResult, projectResult);
+
+  const updateData = {
+    ...(techScreenForm.githubLink?.answer && { customText6: techScreenForm.githubLink.answer }),
+    ...(techScreenForm.onTime?.answer && { customText20: techScreenForm.onTime.answer }),
+    ...(techScreenForm.dressedProfessionally?.answer && { customText21: techScreenForm.dressedProfessionally.answer }),
+    ...(techScreenForm.communicationSkills?.answer && {
+      customText15: techScreenForm.communicationSkills.answer.split('-')[0].trim(),
+    }),
+    customText16: technicalResult,
+    customText17: behavioralResult,
+    customText18: projectResult,
+    customText19: calcResult,
+    customText22: techScreenForm.screenerRecommendation.answer,
+    status: candidateStatus,
+  };
+
+  await axios.post(candidateUrl, updateData, {
+    params: {
+      BhRestToken,
+    },
+  });
+
+  const discrepancy = getResultDiscrepancy(technicalResult, behavioralResult, projectResult, screenerDetermination);
+  discrepancy && (await saveCandidateNote(url, BhRestToken, candidateId, 'Tech Screen Result Mismatch', discrepancy));
+
+  return screenerDetermination === 'Pass'
+    ? 'Tech Screen Passed'
+    : screenerDetermination === 'SE Recommendation'
+    ? 'SE Recommended'
+    : screenerDetermination === 'Fail' && determinationReason;
+};
+
+const calculateSectionResult = (entries: FormEntry[], threshold: any[]): string => {
+  const resultCategories = ['High Pass', 'Low Pass', 'No Pass'];
+  const sectionPoints = entries.length * +entries[0].question.split('(highest:')[1].match(/(\d+)/)[0];
+  const totalPoints = entries.reduce((acc, e) => +e.answer.split('-')[0].trim() + acc, 0);
+  const score = totalPoints / sectionPoints;
+  return resultCategories[threshold.findIndex((t) => score >= t)];
+};
+
+const getCalculatedResult = (technical: string, behavioral: string, project: string): string => {
+  const results = [technical[0], behavioral[0], project[0]].sort((a) => a === 'L' && -1);
+  return results.includes('N')
+    ? 'No Hire'
+    : results.every((r) => r === 'H')
+    ? 'Strong Hire'
+    : `Hire(${results.join('')})`;
+};
+
+const getResultDiscrepancy = (
+  technical: string,
+  behavioral: string,
+  project: string,
+  determination: string
+): string => {
+  const failedSections = [
+    { name: 'Technical', result: technical },
+    { name: 'Behavioral', result: behavioral },
+    { name: 'Project', result: project },
+  ].flatMap((s) => (s.result === 'No Pass' ? [s.name] : []));
+
+  return failedSections.length && determination === 'Pass'
+    ? `Tech Screener determination was "Pass" but Candidate failed the following section/s: "${failedSections.join(
+        ','
+      )}"`
+    : failedSections.includes('Behavioral') && determination === 'SE Recommendation'
+    ? 'Candidate was SE Recommended but failed Behavioral Section of Tech Screening'
+    : '';
+};
+
+const saveCandidateNote = async (
+  url: string,
+  BhRestToken: string,
+  candidateId: number,
+  title: string,
+  comments: string
+) => {
+  const noteUrl = `${url}entity/Note`;
+  const note = {
+    action: title,
+    comments,
+    personReference: {
+      searchEntity: 'Candidate',
+      id: candidateId,
+    },
+  };
+  await axios.put(noteUrl, note, {
+    params: {
+      BhRestToken,
+    },
+  });
 };
 
 export const saveApplicationNote = async (
@@ -255,10 +402,18 @@ export const saveFormNote = async (
   const action = `${formType} Survey`;
   const note = {
     action,
-    comments: Object.keys(form).reduce(
-      (acc, e, i) => `${acc}Q${i + 1} - ${form[e].question}\nA${i + 1} - ${form[e].answer}\n\n`,
-      ''
-    ),
+    comments: Object.keys(form).reduce((acc, e, i) => {
+      if (Array.isArray(form[e])) {
+        return (
+          acc +
+          form[e].reduce(
+            (acc, entry, l) => `${acc}Q${i + l + 1} - ${entry.question}\nA${i + l + 1} - ${entry.answer}\n\n`,
+            ''
+          )
+        );
+      }
+      return `${acc}Q${i + 1} - ${form[e].question}\nA${i + 1} - ${form[e].answer}\n\n`;
+    }, ''),
     personReference: {
       searchEntity: 'Candidate',
       id: candidateId,
@@ -276,13 +431,16 @@ export const saveNoSubmissionNote = async (
   url: string,
   BhRestToken: string,
   candidateId: number,
-  prescreenResult: string
+  prescreenResult: string,
+  searchStatuses: string[]
 ): Promise<void> => {
   const noteUrl = `${url}entity/Note`;
   const action = `Submission Status Note`;
   const note = {
     action,
-    comments: `Submission status of "${prescreenResult}" was not updated since no application was found under "Webinar Passed" status`,
+    comments: `Submission status of "${prescreenResult}" was not updated since no application was found under "${searchStatuses.join(
+      '/'
+    )}" status`,
     personReference: {
       searchEntity: 'Candidate',
       id: candidateId,
@@ -523,7 +681,8 @@ export const saveCandidateLinks = async (
   challengeLink: string,
   challengeSchedulingLink: string,
   webinarSchedulingLink: string,
-  preScreeningLink: string
+  preScreeningLink: string,
+  techScreeningLink: string
 ) => {
   const candidateUrl = `${url}entity/Candidate/${candidateId}`;
   const updateData = {
@@ -531,6 +690,7 @@ export const saveCandidateLinks = async (
     customTextBlock2: challengeSchedulingLink,
     customTextBlock3: webinarSchedulingLink,
     customTextBlock6: preScreeningLink,
+    customTextBlock7: techScreeningLink,
   };
   return axios.post(candidateUrl, updateData, {
     params: {
