@@ -2,7 +2,7 @@ import { middyfy } from '@libs/lambda';
 import { APIGatewayEvent } from 'aws-lambda';
 import { getSessionData } from 'src/service/auth/bullhorn.oauth.service';
 import { findCandidates, saveCandidateFields } from 'src/service/careers.service';
-import { getPrescreeningLink } from 'src/util/links';
+import { getTechScreeningLink } from 'src/util/links';
 
 const massUpdate = async (event: APIGatewayEvent) => {
   try {
@@ -18,11 +18,11 @@ const massUpdate = async (event: APIGatewayEvent) => {
     } while (totalCandidates.length !== count);
     for (const candidate of totalCandidates) {
       await saveCandidateFields(restUrl, BhRestToken, candidate.id, {
-        customTextBlock6: getPrescreeningLink({
+        customTextBlock7: getTechScreeningLink({
           firstName: candidate.firstName,
           lastName: candidate.lastName,
           email: candidate.email,
-          relocation: candidate.customText25 ?? '',
+          githubLink: candidate.customText6 ?? '',
         } as any),
       });
     }
