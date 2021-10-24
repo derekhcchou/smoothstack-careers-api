@@ -7,4 +7,6 @@ export interface Appointment {
   datetime: string;
   appointmentTypeID: number;
   calendarID: number;
+  duration: number;
+  confirmationPage: string;
 }

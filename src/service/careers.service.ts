@@ -6,6 +6,7 @@ import { CandidateExtraFields } from 'src/model/CandidateExtraFields';
 import { ChallengeSession } from 'src/model/ChallengeEvent';
 import { FormEntry, PrescreenForm, TechScreenForm } from 'src/model/Form';
 import { JobOrder } from 'src/model/JobOrder';
+import { ResumeFile } from 'src/model/ResumeFile';
 import { SchedulingType } from 'src/model/SchedulingType';
 import { WebinarRegistration } from 'src/model/WebinarRegistration';
 
@@ -50,21 +51,24 @@ export const findCandidateByEmail = async (url: string, BhRestToken: string, ema
     params: {
       BhRestToken,
       fields:
-        'id,firstName,lastName,email,submissions(id,status,dateAdded),webResponses(id,dateAdded),customText9,customTextBlock4,customText36',
+        'id,firstName,lastName,email,submissions(id,jobOrder(id,title),status),webResponses(id,dateAdded),fileAttachments(id,type),customText9,customTextBlock4,customText36,customText6,customText11',
       query: `email:${email}`,
       count: '1',
     },
   });
 
   if (data.data.length) {
-    const { customText9, customTextBlock4, customText36, ...candidate } = data.data[0];
+    const { customText9, customTextBlock4, customText36, customText6, customText11, ...candidate } = data.data[0];
     return {
       ...candidate,
       challengeLink: customText9,
       webinarLink: customTextBlock4,
       webinarRegistrantId: customText36,
+      githubLink: customText6,
+      techScreenEventId: customText11,
       submissions: candidate.submissions.data,
       webResponses: candidate.webResponses.data,
+      fileAttachments: candidate.fileAttachments.data,
     };
   }
   return undefined;
@@ -137,26 +141,39 @@ export const findCandidateByAppointment = async (
       ? 'customText34'
       : schedulingType === SchedulingType.WEBINAR
       ? 'customText37'
-      : '';
+      : schedulingType === SchedulingType.TECHSCREEN && 'customText39';
   const { data } = await axios.get(candidateQueryUrl, {
     params: {
       BhRestToken,
-      fields: 'id,firstName,lastName,email,customText9,customText36',
+      fields:
+        'id,firstName,lastName,email,customText9,customText36,customText11,submissions(id,jobOrder(id,title),status),fileAttachments(id,type)',
       query: `${appointmentIdField}:${appointmentId}`,
       count: '1',
     },
   });
 
   if (data.data.length) {
-    const { customText9, customTextBlock4, customText36, ...candidate } = data.data[0];
+    const { customText9, customTextBlock4, customText36, customText11, ...candidate } = data.data[0];
     return {
       ...candidate,
       webinarLink: customTextBlock4,
       challengeLink: customText9,
       webinarRegistrantId: customText36,
+      techScreenEventId: customText11,
+      submissions: candidate.submissions.data,
+      fileAttachments: candidate.fileAttachments.data,
     };
   }
   return undefined;
+};
+
+export const saveCandidateFields = async (url: string, BhRestToken: string, candidateId: number, updateData: any) => {
+  const candidateUrl = `${url}entity/Candidate/${candidateId}`;
+  return axios.post(candidateUrl, updateData, {
+    params: {
+      BhRestToken,
+    },
+  });
 };
 
 export const populateCandidateFields = async (
@@ -288,6 +305,7 @@ export const saveTechScreenData = async (
     customText18: projectResult,
     customText19: calcResult,
     customText22: techScreenForm.screenerRecommendation.answer,
+    customText40: techScreenForm.respondentEmail.answer,
     status: candidateStatus,
   };
 
@@ -431,14 +449,14 @@ export const saveNoSubmissionNote = async (
   url: string,
   BhRestToken: string,
   candidateId: number,
-  prescreenResult: string,
+  status: string,
   searchStatuses: string[]
 ): Promise<void> => {
   const noteUrl = `${url}entity/Note`;
   const action = `Submission Status Note`;
   const note = {
     action,
-    comments: `Submission status of "${prescreenResult}" was not updated since no application was found under "${searchStatuses.join(
+    comments: `Submission status of "${status}" was not updated since no application was found under "${searchStatuses.join(
       '/'
     )}" status`,
     personReference: {
@@ -536,6 +554,13 @@ export const saveSchedulingDataByEmail = async (
         customTextBlock4: webinarRegistration.joinUrl,
         customText36: webinarRegistration.registrantId,
       };
+    case SchedulingType.TECHSCREEN:
+      updateData = {
+        customText10: status,
+        customText39: appointmentId,
+        customDate5: date.split('T')[0].replace(/(\d{4})\-(\d{2})\-(\d{2})/, '$2/$3/$1'),
+        customTextBlock7: appointment.confirmationPage
+      };
       break;
   }
 
@@ -578,6 +603,12 @@ export const saveSchedulingDataByAppointmentId = async (
           customDate13: date.split('T')[0].replace(/(\d{4})\-(\d{2})\-(\d{2})/, '$2/$3/$1'),
           ...(webinarRegistration && { customTextBlock4: webinarRegistration.joinUrl }),
           ...(webinarRegistration && { customText36: webinarRegistration.registrantId }),
+        };
+        break;
+      case SchedulingType.TECHSCREEN:
+        updateData = {
+          customText10: status,
+          customDate5: date.split('T')[0].replace(/(\d{4})\-(\d{2})\-(\d{2})/, '$2/$3/$1'),
         };
         break;
     }
@@ -682,7 +713,7 @@ export const saveCandidateLinks = async (
   challengeSchedulingLink: string,
   webinarSchedulingLink: string,
   preScreeningLink: string,
-  techScreeningLink: string
+  techScreenSchedulingLink: string
 ) => {
   const candidateUrl = `${url}entity/Candidate/${candidateId}`;
   const updateData = {
@@ -690,7 +721,7 @@ export const saveCandidateLinks = async (
     customTextBlock2: challengeSchedulingLink,
     customTextBlock3: webinarSchedulingLink,
     customTextBlock6: preScreeningLink,
-    customTextBlock7: techScreeningLink,
+    customTextBlock5: techScreenSchedulingLink,
   };
   return axios.post(candidateUrl, updateData, {
     params: {
@@ -747,4 +778,24 @@ export const saveSubmissionStatus = async (
       BhRestToken,
     },
   });
+};
+
+export const fetchCandidateResume = async (
+  url: string,
+  BhRestToken: string,
+  candidate: Candidate
+): Promise<ResumeFile> => {
+  const resumeId = candidate.fileAttachments.find((file) => file.type === 'Resume')?.id;
+  const filesUrl = `${url}file/Candidate/${candidate.id}/${resumeId}`;
+
+  if (resumeId) {
+    const { data } = await axios.get(filesUrl, {
+      params: {
+        BhRestToken,
+      },
+    });
+
+    return data.File;
+  }
+  return undefined;
 };
