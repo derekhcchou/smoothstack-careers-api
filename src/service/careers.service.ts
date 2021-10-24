@@ -101,6 +101,25 @@ export const findCandidateByEmailOrPhone = async (
   return undefined;
 };
 
+export const findCandidates = async (url: string, BhRestToken: string, startIndex: number): Promise<any> => {
+  const candidateQueryUrl = `${url}search/Candidate`;
+  const activeClause = 'status:"New Lead" OR status:Active';
+  const rejectedClause = 'status:Rejected';
+  const snoozeClause = 'status:Snooze';
+  const { data } = await axios.get(candidateQueryUrl, {
+    params: {
+      BhRestToken,
+      fields: 'status,id,firstName,lastName,phone,email,customText25,customTextBlock6,customTextBlock7,customText6',
+      query: `isDeleted:0  AND (${activeClause}) AND NOT customTextBlock5:([0 TO 9] [a TO z])`,
+      count: '500',
+      start: startIndex,
+    },
+  });
+
+  return { recordCount: data.total, candidates: data.data };
+};
+
+
 export const findCandidateByAppointment = async (
   url: string,
   BhRestToken: string,
