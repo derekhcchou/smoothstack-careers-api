@@ -19,7 +19,7 @@ const massUpdate = async (event: APIGatewayEvent) => {
     } while (totalCandidates.length !== count);
     for (const candidate of totalCandidates) {
       await saveCandidateFields(restUrl, BhRestToken, candidate.id, {
-        customTextBlock7: getSchedulingLink(
+        customTextBlock5: getSchedulingLink(
           candidate.firstName,
           candidate.lastName,
           candidate.email,
