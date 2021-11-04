@@ -6,15 +6,22 @@ export interface Candidate {
   lastName: string;
   email: string;
   phone: string;
+  owner: Owner;
   challengeLink: string;
   webinarLink: string;
   webinarRegistrantId: string;
   relocation: string;
   techScreenEventId: string;
+  challengeEventId: string;
   submissions: Submission[];
   webResponses: WebResponse[];
   githubLink: string;
   fileAttachments: Attachment[];
+}
+
+interface Owner {
+  id: number;
+  email: string;
 }
 
 interface Attachment {
