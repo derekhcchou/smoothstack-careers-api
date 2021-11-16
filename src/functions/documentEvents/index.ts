@@ -4,9 +4,13 @@ export default {
   handler: `${handlerPath(__dirname)}/handler.main`,
   events: [
     {
-      sns: {
-        arn: { Ref: 'ChallengeGenerationTopic' },
-        topicName: 'smoothstack-challenge-generation-sns-topic',
+      http: {
+        method: 'post',
+        path: 'document-events',
+        cors: {
+          origin: '*',
+          headers: ['Content-Type'],
+        },
       },
     },
   ],

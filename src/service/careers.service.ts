@@ -6,6 +6,7 @@ import { CandidateExtraFields } from 'src/model/CandidateExtraFields';
 import { ChallengeSession } from 'src/model/ChallengeEvent';
 import { FormEntry, PrescreenForm, TechScreenForm } from 'src/model/Form';
 import { JobOrder } from 'src/model/JobOrder';
+import { JobSubmission } from 'src/model/JobSubmission';
 import { ResumeFile } from 'src/model/ResumeFile';
 import { SchedulingType } from 'src/model/SchedulingType';
 import { WebinarRegistration } from 'src/model/WebinarRegistration';
@@ -24,7 +25,7 @@ export const createWebResponse = async (careerId: string, application: any, resu
     headers: form.getHeaders(),
   });
 
-  return res.data.candidate;
+  return res.data;
 };
 
 export const fetchCandidate = async (url: string, BhRestToken: string, candidateId: number): Promise<Candidate> => {
@@ -164,6 +165,15 @@ export const findCandidateByAppointment = async (
 export const saveCandidateFields = async (url: string, BhRestToken: string, candidateId: number, updateData: any) => {
   const candidateUrl = `${url}entity/Candidate/${candidateId}`;
   return axios.post(candidateUrl, updateData, {
+    params: {
+      BhRestToken,
+    },
+  });
+};
+
+export const saveSubmissionFields = async (url: string, BhRestToken: string, submissionId: number, updateData: any) => {
+  const submissionUrl = `${url}entity/JobSubmission/${submissionId}`;
+  return axios.post(submissionUrl, updateData, {
     params: {
       BhRestToken,
     },
@@ -574,6 +584,40 @@ export const saveSchedulingDataByEmail = async (
   return candidate;
 };
 
+export const saveSchedulingDataBySubmissionId = async (
+  url: string,
+  BhRestToken: string,
+  status: string,
+  appointment: Appointment,
+  type: SchedulingType
+): Promise<JobSubmission> => {
+  const { email, datetime: date } = appointment;
+  const submissionId = email.split('@')[0];
+  const submission = await fetchSubmission(url, BhRestToken, +submissionId);
+  const submissionUrl = `${url}entity/JobSubmission/${submissionId}`;
+
+  const schedulingDate = status === 'canceled' ? '' : date;
+  let updateData: any;
+  switch (type) {
+    case SchedulingType.CHALLENGE: {
+      updateData = {
+        customText11: status,
+        customDate1: schedulingDate.split('T')[0].replace(/(\d{4})\-(\d{2})\-(\d{2})/, '$2/$3/$1'),
+      };
+      break;
+    }
+  }
+
+  await axios.post(submissionUrl, updateData, {
+    params: {
+      BhRestToken,
+    },
+  });
+  await saveSchedulingNote(url, BhRestToken, submission.candidate.id, type, status, schedulingDate);
+
+  return submission;
+};
+
 export const saveSchedulingDataByAppointmentId = async (
   url: string,
   BhRestToken: string,
@@ -648,7 +692,49 @@ export const saveWebinarDataByEmail = async (
   }
 };
 
-export const saveChallengeResult = async (
+export const saveSubmissionChallengeResult = async (
+  url: string,
+  BhRestToken: string,
+  challengeSession: ChallengeSession,
+  submissionId: number
+): Promise<void> => {
+  const { evaluation } = challengeSession;
+  const score = Math.round((evaluation.result / evaluation.max_result) * 100);
+  const submissionUrl = `${url}entity/JobSubmission/${submissionId}`;
+  const updateData = {
+    customText12: score,
+  };
+
+  return axios.post(submissionUrl, updateData, {
+    params: {
+      BhRestToken,
+    },
+  });
+};
+
+export const saveSubmissionChallengeSimilarity = async (
+  url: string,
+  BhRestToken: string,
+  challengeSession: ChallengeSession,
+  submissionId: number
+): Promise<void> => {
+  const { similarity } = challengeSession;
+  if (similarity) {
+    const submissionUrl = `${url}entity/JobSubmission/${submissionId}`;
+    const updateData = {
+      customText13: similarity.text,
+    };
+
+    return axios.post(submissionUrl, updateData, {
+      params: {
+        BhRestToken,
+      },
+    });
+  }
+};
+
+//TODO: To be removed
+export const saveCandidateChallengeResult = async (
   url: string,
   BhRestToken: string,
   challengeSession: ChallengeSession
@@ -667,7 +753,8 @@ export const saveChallengeResult = async (
   });
 };
 
-export const saveChallengeSimilarity = async (
+//TODO: To be removed
+export const saveCandidateChallengeSimilarity = async (
   url: string,
   BhRestToken: string,
   challengeSession: ChallengeSession
@@ -707,21 +794,36 @@ export const saveCandidateLinks = async (
   url: string,
   BhRestToken: string,
   candidateId: number,
-  challengeLink: string,
-  challengeSchedulingLink: string,
   webinarSchedulingLink: string,
   preScreeningLink: string,
   techScreenSchedulingLink: string
 ) => {
   const candidateUrl = `${url}entity/Candidate/${candidateId}`;
   const updateData = {
-    customText9: challengeLink,
-    customTextBlock2: challengeSchedulingLink,
     customTextBlock3: webinarSchedulingLink,
     customTextBlock6: preScreeningLink,
     customTextBlock5: techScreenSchedulingLink,
   };
   return axios.post(candidateUrl, updateData, {
+    params: {
+      BhRestToken,
+    },
+  });
+};
+
+export const saveSubmissionLinks = async (
+  url: string,
+  BhRestToken: string,
+  submissionId: number,
+  challengeLink: string,
+  challengeSchedulingLink: string
+) => {
+  const submissionUrl = `${url}entity/JobSubmission/${submissionId}`;
+  const updateData = {
+    customText10: challengeLink,
+    customTextBlock1: challengeSchedulingLink,
+  };
+  return axios.post(submissionUrl, updateData, {
     params: {
       BhRestToken,
     },
@@ -738,12 +840,49 @@ export const fetchNewSubmissions = async (url: string, BhRestToken: string): Pro
   const { data } = await axios.get(submissionsUrl, {
     params: {
       BhRestToken,
-      fields: 'candidate,jobOrder,status,isDeleted',
+      fields: 'id,isDeleted',
     },
   });
 
   const submissionArr = ids.length > 1 ? data.data : [data.data];
-  const filteredSubs = submissionArr.filter((sub) => !sub.isDeleted && sub.status === 'Internally Submitted');
+  const filteredSubs = submissionArr.filter((sub) => !sub.isDeleted);
+
+  return filteredSubs;
+};
+
+export const fetchUpdatedSubmissions = async (url: string, BhRestToken: string): Promise<any[]> => {
+  const ids = await fetchUpdatedJobSubmissionsIds(url, BhRestToken);
+  if (!ids.length) {
+    return [];
+  }
+
+  const submissionsUrl = `${url}entity/JobSubmission/${ids.join(',')}`;
+  const { data } = await axios.get(submissionsUrl, {
+    params: {
+      BhRestToken,
+      fields:
+        'id,candidate(firstName,lastName,email,phone,owner(firstName,lastName,email)),jobOrder(startDate,customDate1,salary,customFloat1),status,isDeleted',
+    },
+  });
+
+  const submissionArr = ids.length > 1 ? data.data : [data.data];
+
+  const filteredSubs = submissionArr.flatMap((sub) =>
+    !sub.isDeleted && ['Evaluation Offered', 'SE Offered'].includes(sub.status)
+      ? [
+          {
+            ...sub,
+            jobOrder: {
+              ...sub.jobOrder,
+              evaluationStartDate: sub.jobOrder.startDate,
+              seStartDate: sub.jobOrder.customDate1,
+              year1Salary: sub.jobOrder.salary,
+              year2Salary: sub.jobOrder.customFloat1,
+            },
+          },
+        ]
+      : []
+  );
 
   return filteredSubs;
 };
@@ -757,8 +896,24 @@ export const fetchNewJobSubmissionsIds = async (url: string, BhRestToken: string
     },
   });
 
-  const newJobSubmissionIds = data.events?.map((e: any) => e.entityId);
-  return newJobSubmissionIds ?? [];
+  const jobSubmissionIds = data.events?.map((e: any) => e.entityId);
+  return jobSubmissionIds ?? [];
+};
+
+export const fetchUpdatedJobSubmissionsIds = async (url: string, BhRestToken: string): Promise<number[]> => {
+  const eventsUrl = `${url}event/subscription/2`;
+  const { data } = await axios.get(eventsUrl, {
+    params: {
+      BhRestToken,
+      maxEvents: 500,
+    },
+  });
+
+  const jobSubmissionIds = data.events?.flatMap((e: any) =>
+    e.updatedProperties.includes('status') ? [e.entityId] : []
+  );
+  const uniqueIds = [...new Set(jobSubmissionIds)] as any;
+  return uniqueIds ?? [];
 };
 
 export const saveSubmissionStatus = async (
@@ -796,4 +951,50 @@ export const fetchCandidateResume = async (
     return data.File;
   }
   return undefined;
+};
+
+export const uploadCandidateFile = async (
+  url: string,
+  BhRestToken: string,
+  candidateId: number,
+  fileContent: string,
+  fileName: string,
+  fileType: string
+) => {
+  const filesUrl = `${url}file/Candidate/${candidateId}`;
+  const fileData = {
+    externalID: 'signedDocument',
+    fileContent,
+    name: fileName,
+    fileType: 'SAMPLE',
+    type: fileType,
+  };
+  await axios.put(filesUrl, fileData, {
+    params: {
+      BhRestToken,
+    },
+  });
+};
+
+export const fetchSubmission = async (
+  url: string,
+  BhRestToken: string,
+  submissionId: number
+): Promise<JobSubmission> => {
+  const submissionsUrl = `${url}entity/JobSubmission/${submissionId}`;
+  const { data } = await axios.get(submissionsUrl, {
+    params: {
+      BhRestToken,
+      fields:
+        'id,status,candidate(id,firstName,lastName,email,phone),jobOrder(customText1),dateAdded,customText15,customText10',
+    },
+  });
+
+  const { customText15, customText10, ...submission } = data.data;
+  return {
+    ...submission,
+    challengeEventId: customText15,
+    challengeLink: customText10,
+    jobOrder: { challengeName: submission.jobOrder.customText1 },
+  };
 };
