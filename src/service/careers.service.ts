@@ -122,6 +122,57 @@ export const findCandidates = async (url: string, BhRestToken: string, startInde
   return { recordCount: data.total, candidates: data.data };
 };
 
+export const findChallengeSubmissions = async (url: string, BhRestToken: string, startIndex: number): Promise<any> => {
+  const submissionQueryUrl = `${url}search/JobSubmission`;
+  const statusClause = 'status:"Challenge Scheduled"';
+  const { data } = await axios.get(submissionQueryUrl, {
+    params: {
+      BhRestToken,
+      fields: 'id,status,candidate(id)',
+      query: `isDeleted:0 AND (${statusClause})`,
+      count: '500',
+      start: startIndex,
+    },
+  });
+
+  return { recordCount: data.total, submissions: data.data };
+};
+
+export const findNotChallengeSubmissions = async (
+  url: string,
+  BhRestToken: string,
+  startIndex: number
+): Promise<any> => {
+  const submissionQueryUrl = `${url}search/JobSubmission`;
+  const statusClause = '*:* AND NOT status:"Challenge Scheduled"';
+  const { data } = await axios.get(submissionQueryUrl, {
+    params: {
+      BhRestToken,
+      fields: 'id,status,candidate(id)',
+      query: `isDeleted:0 AND (${statusClause})`,
+      count: '500',
+      start: startIndex,
+    },
+  });
+
+  return { recordCount: data.total, submissions: data.data };
+};
+
+export const findEmptyLinkSubmissions = async (url: string, BhRestToken: string, startIndex: number): Promise<any> => {
+  const submissionQueryUrl = `${url}search/JobSubmission`;
+  const linkClause = 'customText10:""';
+  const { data } = await axios.get(submissionQueryUrl, {
+    params: {
+      BhRestToken,
+      fields: 'id,status,candidate(id,firstName,lastName,email,phone),jobOrder(id,customText1)',
+      query: `isDeleted:0 AND (${linkClause})`,
+      count: '500',
+      start: startIndex,
+    },
+  });
+
+  return { recordCount: data.total, submissions: data.data };
+};
 
 export const findCandidateByAppointment = async (
   url: string,
