@@ -148,7 +148,7 @@ export const findNotChallengeSubmissions = async (
   const { data } = await axios.get(submissionQueryUrl, {
     params: {
       BhRestToken,
-      fields: 'id,status,candidate(id)',
+      fields: 'id,status,candidate(id,customText9)',
       query: `isDeleted:0 AND (${statusClause})`,
       count: '500',
       start: startIndex,
@@ -160,11 +160,11 @@ export const findNotChallengeSubmissions = async (
 
 export const findEmptyLinkSubmissions = async (url: string, BhRestToken: string, startIndex: number): Promise<any> => {
   const submissionQueryUrl = `${url}search/JobSubmission`;
-  const linkClause = 'customText10:""';
+  const linkClause = '*:* AND NOT customText10:["" TO *] AND (status:"New Lead" OR status:"Submitted" OR status:"Internally Submitted")';
   const { data } = await axios.get(submissionQueryUrl, {
     params: {
       BhRestToken,
-      fields: 'id,status,candidate(id,firstName,lastName,email,phone),jobOrder(id,customText1)',
+      fields: 'id,status,candidate(id,firstName,lastName,email,phone,isDeleted),jobOrder(id,customText1),customText10',
       query: `isDeleted:0 AND (${linkClause})`,
       count: '500',
       start: startIndex,

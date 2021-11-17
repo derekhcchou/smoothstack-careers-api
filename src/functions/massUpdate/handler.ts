@@ -55,27 +55,73 @@ import { getSchedulingLink } from 'src/util/links';
 //   }
 // };
 
+// const massUpdate = async (event: APIGatewayEvent) => {
+//   try {
+//     const { restUrl, BhRestToken } = await getSessionData();
+//     let totalSubmissions = [];
+//     let count = 0;
+//     let index = 0;
+
+//     const { submissions: challengeSubmissions } = await findChallengeSubmissions(restUrl, BhRestToken, index);
+//     const candidateChallengeIds = challengeSubmissions.map((s) => s.candidate.id);
+
+//     do {
+//       const { submissions, recordCount } = await findNotChallengeSubmissions(restUrl, BhRestToken, index);
+//       count = recordCount;
+//       index += 500;
+//       totalSubmissions = [...totalSubmissions, ...submissions];
+//     } while (totalSubmissions.length !== count);
+
+//     for (const submission of totalSubmissions) {
+//       if (!candidateChallengeIds.includes(submission.candidate.id)) {
+//         if (submission.candidate.customText9) {
+//           console.log(submission.candidate);
+//           await saveCandidateFields(restUrl, BhRestToken, submission.candidate.id, {
+//             customText9: '',
+//           });
+//         }
+//       }
+//     }
+//   } catch (e) {
+//     console.error('Error mass updating: ', e);
+//   }
+// };
+
 const massUpdate = async (event: APIGatewayEvent) => {
   try {
     const { restUrl, BhRestToken } = await getSessionData();
+    const { BEARER_TOKEN, CALLBACK_URL } = await getCodilitySecrets();
     let totalSubmissions = [];
     let count = 0;
     let index = 0;
 
-    const { submissions: challengeSubmissions } = await findChallengeSubmissions(restUrl, BhRestToken, index);
-    const candidateChallengeIds = challengeSubmissions.map((s) => s.candidate.id);
-
     do {
-      const { submissions, recordCount } = await findNotChallengeSubmissions(restUrl, BhRestToken, index);
+      const { submissions, recordCount } = await findEmptyLinkSubmissions(restUrl, BhRestToken, index);
       count = recordCount;
       index += 500;
       totalSubmissions = [...totalSubmissions, ...submissions];
     } while (totalSubmissions.length !== count);
 
     for (const submission of totalSubmissions) {
-      if (!candidateChallengeIds.includes(submission.candidate.id)) {
-        await saveCandidateFields(restUrl, BhRestToken, submission.candidate.id, {
-          customText9: '',
+      if (!submission.candidate.isDeleted) {
+        console.log(submission);
+        const { id: challengeId } = await getChallengeDetails(submission.jobOrder.customText1, BEARER_TOKEN);
+        const challengeLink = await generateChallengeLink(
+          challengeId,
+          submission.candidate,
+          BEARER_TOKEN,
+          `${CALLBACK_URL}?submissionId=${submission.id}`
+        );
+        const challengeSchedulingLink = getSchedulingLink(
+          submission.candidate.firstName,
+          submission.candidate.lastName,
+          `${submission.id}@smoothstack.com`,
+          submission.candidate.phone,
+          SchedulingTypeId.CHALLENGE_V2
+        );
+        await saveSubmissionFields(restUrl, BhRestToken, submission.id, {
+          customText10: challengeLink,
+          customTextBlock1: challengeSchedulingLink,
         });
       }
     }
@@ -83,45 +129,5 @@ const massUpdate = async (event: APIGatewayEvent) => {
     console.error('Error mass updating: ', e);
   }
 };
-
-// const massUpdate = async (event: APIGatewayEvent) => {
-//   try {
-//     const { restUrl, BhRestToken } = await getSessionData();
-//     const { BEARER_TOKEN, CALLBACK_URL } = await getCodilitySecrets();
-//     let totalSubmissions = [];
-//     let count = 0;
-//     let index = 0;
-
-//     do {
-//       const { submissions, recordCount } = await findEmptyLinkSubmissions(restUrl, BhRestToken, index);
-//       count = recordCount;
-//       index += 500;
-//       totalSubmissions = [...totalSubmissions, ...submissions];
-//     } while (totalSubmissions.length !== count);
-
-//     for (const submission of totalSubmissions) {
-//       const { id: challengeId } = await getChallengeDetails(submission.jobOrder.customText1, BEARER_TOKEN);
-//       const challengeLink = await generateChallengeLink(
-//         challengeId,
-//         submission.candidate,
-//         BEARER_TOKEN,
-//         `${CALLBACK_URL}?submissionId=${submission.id}`
-//       );
-//       const challengeSchedulingLink = getSchedulingLink(
-//         submission.candidate.firstName,
-//         submission.candidate.lastName,
-//         `${submission.id}@smoothstack.com`,
-//         submission.candidate.phone,
-//         SchedulingTypeId.CHALLENGE_V2
-//       );
-//       await saveSubmissionFields(restUrl, BhRestToken, submission.id, {
-//         customText10: challengeLink,
-//         customTextBlock1: challengeSchedulingLink,
-//       });
-//     }
-//   } catch (e) {
-//     console.error('Error mass updating: ', e);
-//   }
-// };
 
 export const main = middyfy(massUpdate);
