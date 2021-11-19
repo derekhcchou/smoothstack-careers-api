@@ -176,7 +176,7 @@ export const findEmptyLinkSubmissions = async (url: string, BhRestToken: string,
 
 export const findScheduledSubmissions = async (url: string, BhRestToken: string, startIndex: number): Promise<any> => {
   const submissionQueryUrl = `${url}search/JobSubmission`;
-  const linkClause = '*:* AND NOT customText16:["" TO *] AND (customText11:scheduled OR customText11:rescheduled)';
+  const linkClause = '*:* AND NOT customText16:["" TO *] AND (customText11:scheduled OR customText11:rescheduled) AND NOT customText12:["" TO *]';
   const { data } = await axios.get(submissionQueryUrl, {
     params: {
       BhRestToken,

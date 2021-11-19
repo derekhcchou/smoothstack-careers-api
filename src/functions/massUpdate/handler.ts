@@ -108,7 +108,7 @@ const massUpdate = async (event: APIGatewayEvent) => {
 
     for (const submission of totalSubmissions) {
       console.log(submission);
-      const appointment = await findAppointmentByEmail(apiKey, userId, `coding_challenge_${submission.id}@smoothstack.com`);
+      const appointment = await findAppointmentByEmail(apiKey, userId, `${submission.id}@smoothstack.com`);
       if (appointment) {
         await saveSubmissionFields(restUrl, BhRestToken, submission.id, {
           customText16: appointment.id,
