@@ -174,6 +174,22 @@ export const findEmptyLinkSubmissions = async (url: string, BhRestToken: string,
   return { recordCount: data.total, submissions: data.data };
 };
 
+export const findScheduledSubmissions = async (url: string, BhRestToken: string, startIndex: number): Promise<any> => {
+  const submissionQueryUrl = `${url}search/JobSubmission`;
+  const linkClause = '*:* AND NOT customText16:["" TO *] AND (customText11:scheduled OR customText11:rescheduled)';
+  const { data } = await axios.get(submissionQueryUrl, {
+    params: {
+      BhRestToken,
+      fields: 'id',
+      query: `isDeleted:0 AND (${linkClause})`,
+      count: '500',
+      start: startIndex,
+    },
+  });
+
+  return { recordCount: data.total, submissions: data.data };
+};
+
 export const findCandidateByAppointment = async (
   url: string,
   BhRestToken: string,
