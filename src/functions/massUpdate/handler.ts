@@ -58,49 +58,15 @@ import { getSchedulingLink } from 'src/util/links';
 //   }
 // };
 
-// const massUpdate = async (event: APIGatewayEvent) => {
-//   try {
-//     const { restUrl, BhRestToken } = await getSessionData();
-//     let totalSubmissions = [];
-//     let count = 0;
-//     let index = 0;
-
-//     const { submissions: challengeSubmissions } = await findChallengeSubmissions(restUrl, BhRestToken, index);
-//     const candidateChallengeIds = challengeSubmissions.map((s) => s.candidate.id);
-
-//     do {
-//       const { submissions, recordCount } = await findNotChallengeSubmissions(restUrl, BhRestToken, index);
-//       count = recordCount;
-//       index += 500;
-//       totalSubmissions = [...totalSubmissions, ...submissions];
-//     } while (totalSubmissions.length !== count);
-
-//     for (const submission of totalSubmissions) {
-//       if (!candidateChallengeIds.includes(submission.candidate.id)) {
-//         if (submission.candidate.customText9) {
-//           console.log(submission.candidate);
-//           await saveCandidateFields(restUrl, BhRestToken, submission.candidate.id, {
-//             customText9: '',
-//           });
-//         }
-//       }
-//     }
-//   } catch (e) {
-//     console.error('Error mass updating: ', e);
-//   }
-// };
-
 const massUpdate = async (event: APIGatewayEvent) => {
   try {
     const { restUrl, BhRestToken } = await getSessionData();
-    const { apiKey, userId } = await getSquareSpaceSecrets();
-
     let totalSubmissions = [];
     let count = 0;
     let index = 0;
 
     do {
-      const { submissions, recordCount } = await findScheduledSubmissions(restUrl, BhRestToken, index);
+      const { submissions, recordCount } = await findEmptyLinkSubmissions(restUrl, BhRestToken, index);
       count = recordCount;
       index += 500;
       totalSubmissions = [...totalSubmissions, ...submissions];
@@ -108,33 +74,66 @@ const massUpdate = async (event: APIGatewayEvent) => {
 
     for (const submission of totalSubmissions) {
       console.log(submission);
-      const appointment = await findAppointmentByEmail(apiKey, userId, `${submission.id}@smoothstack.com`);
-      if (appointment) {
-        await saveSubmissionFields(restUrl, BhRestToken, submission.id, {
-          customText16: appointment.id,
-        });
-      }
+      await saveSubmissionFields(restUrl, BhRestToken, submission.id, {
+        customTextBlock2: getSchedulingLink(
+          submission.candidate.firstName,
+          submission.candidate.lastName,
+          `techscreen_${submission.id}@smoothstack.com`,
+          submission.candidate.phone,
+          SchedulingTypeId.TECHSCREEN
+        ),
+      });
     }
   } catch (e) {
     console.error('Error mass updating: ', e);
   }
 };
 
-const findAppointmentByEmail = async (apiKey: string, userId: string, email: string): Promise<Appointment> => {
-  const url = `https://acuityscheduling.com/api/v1/appointments`;
+// const massUpdate = async (event: APIGatewayEvent) => {
+//   try {
+//     const { restUrl, BhRestToken } = await getSessionData();
+//     const { apiKey, userId } = await getSquareSpaceSecrets();
 
-  const { data } = await axios.get(url, {
-    params: {
-      email,
-      appointmentTypeID: '23126009',
-    },
-    auth: {
-      username: userId,
-      password: apiKey,
-    },
-  });
+//     let totalSubmissions = [];
+//     let count = 0;
+//     let index = 0;
 
-  return data[0];
-};
+//     do {
+//       const { submissions, recordCount } = await findScheduledSubmissions(restUrl, BhRestToken, index);
+//       count = recordCount;
+//       index += 500;
+//       totalSubmissions = [...totalSubmissions, ...submissions];
+//     } while (totalSubmissions.length !== count);
+
+//     for (const submission of totalSubmissions) {
+//       console.log(submission);
+//       const appointment = await findAppointmentByEmail(apiKey, userId, `${submission.id}@smoothstack.com`);
+//       if (appointment) {
+//         await saveSubmissionFields(restUrl, BhRestToken, submission.id, {
+//           customText16: appointment.id,
+//         });
+//       }
+//     }
+//   } catch (e) {
+//     console.error('Error mass updating: ', e);
+//   }
+// };
+
+// const findAppointmentByEmail = async (apiKey: string, userId: string, email: string): Promise<Appointment> => {
+//   const url = `https://acuityscheduling.com/api/v1/appointments`;
+
+//   const { data } = await axios.get(url, {
+//     params: {
+//       email,
+//       appointmentTypeID: '23126009',
+//     },
+//     auth: {
+//       username: userId,
+//       password: apiKey,
+//     },
+//   });
+
+//   return data[0];
+// };
 
 export const main = middyfy(massUpdate);

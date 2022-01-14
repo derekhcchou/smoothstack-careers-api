@@ -209,11 +209,11 @@ export const findNotChallengeSubmissions = async (
 
 export const findEmptyLinkSubmissions = async (url: string, BhRestToken: string, startIndex: number): Promise<any> => {
   const submissionQueryUrl = `${url}search/JobSubmission`;
-  const linkClause = '*:* AND NOT customText10:["" TO *] AND (status:"New Lead" OR status:"Submitted" OR status:"Internally Submitted")';
+  const linkClause = '*:* AND NOT customTextBlock2:["" TO *] AND (status:"Challenge Passed" OR status:"Webinar Passed" OR status:"Webinar Scheduled" OR status:"Prescreen Scheduled" OR status:"Prescreen Passed" OR status:"Tech Screen Scheduled")';
   const { data } = await axios.get(submissionQueryUrl, {
     params: {
       BhRestToken,
-      fields: 'id,status,candidate(id,firstName,lastName,email,phone,isDeleted),jobOrder(id,customText1),customText10',
+      fields: 'id,status,customTextBlock2,candidate(id,firstName,lastName,email,phone,isDeleted),jobOrder(id,customText1),customText10',
       query: `isDeleted:0 AND (${linkClause})`,
       count: '500',
       start: startIndex,
