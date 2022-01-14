@@ -4,15 +4,14 @@ import { getHelloSignSecrets } from './secrets.service';
 import { DocumentEventRequest } from 'src/model/DocumentEvent';
 import { getSessionData } from './auth/bullhorn.oauth.service';
 import { fetchSubmission, saveSubmissionStatus, uploadCandidateFile } from './careers.service';
+import { sendSignedDocument } from './email.service';
 
 const SUB_STATUS_DOCTYPE = {
   'Evaluation Offered': 'Evaluation',
-  'SE Offered': 'SE',
 };
 
 const DOCTYPE_NAME = {
   Evaluation: 'Engagement Offer',
-  SE: 'SE Offer',
 };
 
 export const generateDocument = async (submission: JobSubmission) => {
@@ -37,7 +36,7 @@ const sendSignatureRequest = async (client: HelloSign, templateId: string, submi
   });
   const docType = SUB_STATUS_DOCTYPE[submission.status];
   const opts = {
-    test_mode: 1, //TODO: Remove
+    // test_mode: 1,
     template_id: templateId,
     subject: 'Smoothstack Document Signature Request',
     message: 'Please sign the following document to confirm enrollment.',
@@ -50,10 +49,20 @@ const sendSignatureRequest = async (client: HelloSign, templateId: string, submi
     ],
     custom_fields: [
       {
+        name: 'todaysDate',
+        value: new Date().toLocaleDateString('en-US', {
+          timeZone: 'America/New_York',
+        }),
+      },
+      {
         name: 'startDate',
         value: new Date(submission.jobOrder[`${docType.toLowerCase()}StartDate`]).toLocaleDateString('en-US', {
           timeZone: 'America/New_York',
         }),
+      },
+      {
+        name: 'trainingLength',
+        value: submission.jobOrder.trainingLength,
       },
       {
         name: 'year1Salary',
@@ -107,6 +116,7 @@ export const processDocumentEvent = async (eventReq: DocumentEventRequest) => {
         `Signed_${docType}_Document.pdf`,
         DOCTYPE_NAME[docType]
       );
+      await sendSignedDocument(submission.candidate.email, docType, signedFile);
       if (submission.status === `${docType} Offered`) {
         await saveSubmissionStatus(restUrl, BhRestToken, submissionId, `${docType} Signed`);
       }

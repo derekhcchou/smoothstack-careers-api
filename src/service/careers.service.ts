@@ -4,12 +4,20 @@ import { Appointment } from 'src/model/Appointment';
 import { Candidate } from 'src/model/Candidate';
 import { CandidateExtraFields } from 'src/model/CandidateExtraFields';
 import { ChallengeSession } from 'src/model/ChallengeEvent';
-import { FormEntry, PrescreenForm, TechScreenForm } from 'src/model/Form';
+import { FormEntry, PrescreenForm, TechScreenForm, TechScreenResults } from 'src/model/Form';
 import { JobOrder } from 'src/model/JobOrder';
 import { JobSubmission } from 'src/model/JobSubmission';
+import { ChallengeLinksData, TechScreenLinksData } from 'src/model/Links';
 import { ResumeFile } from 'src/model/ResumeFile';
 import { SchedulingType } from 'src/model/SchedulingType';
 import { WebinarRegistration } from 'src/model/WebinarRegistration';
+import { deriveSubmissionStatus, shouldDowngradeJob } from 'src/util/challenge.util';
+import {
+  deriveSubmissionStatus as deriveSubmissionStatusTS,
+  shouldDowngradeJob as shouldDowngradeJobTS,
+} from 'src/util/techscreen.utils';
+import { sendTechscreenResult } from './email.service';
+import { generateTechScreenLinks } from './links.service';
 
 export const createWebResponse = async (careerId: string, application: any, resume: any): Promise<any> => {
   // these are public non-secret values
@@ -33,16 +41,60 @@ export const fetchCandidate = async (url: string, BhRestToken: string, candidate
   const { data } = await axios.get(candidatesUrl, {
     params: {
       BhRestToken,
-      fields: 'id,firstName,lastName,email,phone,customText9,customText25,customText6',
+      fields:
+        'id,firstName,lastName,email,phone,customText9,customText25,customText6,submissions(customText10,customText12,customTextBlock1,customTextBlock2,customText14,jobOrder(customText1,customInt1,customInt2,customText7),customDate2,customText20,customText19,customText21,dateAdded,customText18),webResponses(customText10,customText12,customTextBlock1,customTextBlock2,customText14,jobOrder(customText1,customInt1,customInt2,customText7),customDate2,customText20,customText19,customText21,dateAdded,customText18),fileAttachments(id,type)',
     },
   });
 
-  const { customText9, customText25, customText6, ...candidate } = data.data;
+  const { customText9, customText25, customText6, submissions, webResponses, ...candidate } = data.data;
   return {
     ...candidate,
     challengeLink: customText9,
     relocation: customText25,
     githubLink: customText6,
+    fileAttachments: candidate.fileAttachments.data,
+    submissions: [
+      ...submissions.data.map((s) => ({
+        id: s.id,
+        challengeLink: s.customText10,
+        challengeScore: s.customText12,
+        challengeSchedulingLink: s.customTextBlock1,
+        previousChallengeId: s.customText14,
+        techScreenSchedulingLink: s.customTextBlock2,
+        techScreenDate: s.customDate2,
+        techScreenType: s.customText20,
+        techScreenResult: s.customText18,
+        screenerDetermination: s.customText19,
+        screenerEmail: s.customText21,
+        dateAdded: s.dateAdded,
+        jobOrder: {
+          challengeName: s.jobOrder.customText1,
+          passingScore: s.jobOrder.customInt1,
+          foundationsPassingScore: s.jobOrder.customInt2,
+          techScreenType: s.jobOrder.customText7,
+        },
+      })),
+      ...webResponses.data.map((w) => ({
+        id: w.id,
+        challengeLink: w.customText10,
+        challengeScore: w.customText12,
+        challengeSchedulingLink: w.customTextBlock1,
+        previousChallengeId: w.customText14,
+        techScreenSchedulingLink: w.customTextBlock2,
+        techScreenDate: w.customDate2,
+        techScreenType: w.customText20,
+        techScreenResult: w.customText18,
+        screenerDetermination: w.customText19,
+        screenerEmail: w.customText21,
+        dateAdded: w.dateAdded,
+        jobOrder: {
+          challengeName: w.jobOrder.customText1,
+          passingScore: w.jobOrder.customInt1,
+          foundationsPassingScore: w.jobOrder.customInt2,
+          techScreenType: w.jobOrder.customText7,
+        },
+      })),
+    ],
   };
 };
 
@@ -52,23 +104,20 @@ export const findCandidateByEmail = async (url: string, BhRestToken: string, ema
     params: {
       BhRestToken,
       fields:
-        'id,firstName,lastName,email,owner(email),submissions(id,jobOrder(id,title),status),webResponses(id,dateAdded),fileAttachments(id,type),customText9,customTextBlock4,customText36,customText6,customText11,customText38',
+        'id,firstName,lastName,email,owner(email),submissions(id,jobOrder(id,title),status),webResponses(id,dateAdded),fileAttachments(id,type),customText9,customTextBlock4,customText36,customText6',
       query: `email:${email}`,
       count: '1',
     },
   });
 
   if (data.data.length) {
-    const { customText9, customTextBlock4, customText36, customText6, customText11, customText38, ...candidate } =
-      data.data[0];
+    const { customText9, customTextBlock4, customText36, customText6, ...candidate } = data.data[0];
     return {
       ...candidate,
       challengeLink: customText9,
       webinarLink: customTextBlock4,
       webinarRegistrantId: customText36,
       githubLink: customText6,
-      techScreenEventId: customText11,
-      challengeEventId: customText38,
       submissions: candidate.submissions.data,
       webResponses: candidate.webResponses.data,
       fileAttachments: candidate.fileAttachments.data,
@@ -197,33 +246,73 @@ export const findCandidateByAppointment = async (
   schedulingType: SchedulingType
 ): Promise<Candidate> => {
   const candidateQueryUrl = `${url}search/Candidate`;
-  const appointmentIdField =
-    schedulingType === SchedulingType.CHALLENGE
-      ? 'customText34'
-      : schedulingType === SchedulingType.WEBINAR
-      ? 'customText37'
-      : schedulingType === SchedulingType.TECHSCREEN && 'customText39';
+  const appointmentIdField = schedulingType === SchedulingType.WEBINAR && 'customText37';
+
   const { data } = await axios.get(candidateQueryUrl, {
     params: {
       BhRestToken,
       fields:
-        'id,firstName,lastName,email,owner(email),customText9,customText36,customText11,submissions(id,jobOrder(id,title),status),fileAttachments(id,type),customText38',
+        'id,firstName,lastName,email,owner(email),customText9,customText36,submissions(id,jobOrder(id,title),status),fileAttachments(id,type)',
       query: `${appointmentIdField}:${appointmentId}`,
       count: '1',
     },
   });
 
   if (data.data.length) {
-    const { customText9, customTextBlock4, customText36, customText11, customText38, ...candidate } = data.data[0];
+    const { customText9, customTextBlock4, customText36, ...candidate } = data.data[0];
     return {
       ...candidate,
       webinarLink: customTextBlock4,
       challengeLink: customText9,
       webinarRegistrantId: customText36,
-      techScreenEventId: customText11,
-      challengeEventId: customText38,
       submissions: candidate.submissions.data,
       fileAttachments: candidate.fileAttachments.data,
+    };
+  }
+  return undefined;
+};
+
+const findSubmissionByAppointment = async (
+  url: string,
+  BhRestToken: string,
+  appointmentId: number,
+  schedulingType: SchedulingType
+): Promise<JobSubmission> => {
+  const submissionQueryUrl = `${url}search/JobSubmission`;
+  const appointmentIdField =
+    schedulingType === SchedulingType.CHALLENGE
+      ? 'customText16'
+      : schedulingType === SchedulingType.TECHSCREEN && 'customText17';
+
+  const { data } = await axios.get(submissionQueryUrl, {
+    params: {
+      BhRestToken,
+      fields:
+        'id,status,candidate(id,firstName,lastName,email,phone,customText6,customText25,owner(email)),jobOrder(title,customText1,customText7),dateAdded,customText15,customText10,customText23,customText20',
+      query: `${appointmentIdField}:${appointmentId}`,
+      count: '1',
+    },
+  });
+
+  if (data.data.length) {
+    const { customText15, customText10, customText23, customText20, ...submission } = data.data[0];
+    return {
+      ...submission,
+      challengeEventId: customText15,
+      challengeLink: customText10,
+      candidate: {
+        ...submission.candidate,
+        githubLink: submission.candidate.customText6,
+        relocation: submission.candidate.customText25,
+        owner: submission.candidate.owner,
+      },
+      jobOrder: {
+        title: submission.jobOrder.title,
+        challengeName: submission.jobOrder.customText1,
+        techScreenType: submission.jobOrder.customText7,
+      },
+      techScreenEventId: customText23,
+      techScreenType: customText20,
     };
   }
   return undefined;
@@ -332,7 +421,7 @@ export const savePrescreenData = async (
     },
   });
 
-  return result === 'Pass' ? 'Prescreen Passed' : ['Reject', 'Snooze'].includes(result) && resultReason;
+  return result === 'Pass' ? 'Prescreen Passed' : ['Reject', 'Snooze'].includes(result) && `R-${resultReason}`;
 };
 
 const isGraduatingWithin4Months = (graduationDate: Date) => {
@@ -346,39 +435,108 @@ const isGraduatingWithin4Months = (graduationDate: Date) => {
 export const saveTechScreenData = async (
   url: string,
   BhRestToken: string,
-  candidateId: number,
+  submission: JobSubmission,
   techScreenForm: TechScreenForm
-): Promise<string> => {
-  const candidateUrl = `${url}entity/Candidate/${candidateId}`;
-  const screenerDetermination = techScreenForm.screenerRecommendation.answer.split('-')[0];
-  const determinationReason = techScreenForm.screenerRecommendation.answer.split('-')[1];
-  const candidateStatus = ['Pass', 'SE Recommendation'].includes(screenerDetermination)
-    ? 'Active'
-    : screenerDetermination === 'Fail' && 'Rejected';
-  const technicalResult = techScreenForm.technicalQuestions
-    ? calculateSectionResult(techScreenForm.technicalQuestions, [0.8, 0.6, 0])
-    : 'No Pass';
-  const behavioralResult = techScreenForm.behavioralQuestions
-    ? calculateSectionResult(techScreenForm.behavioralQuestions, [0.75, 0.5, 0])
-    : 'No Pass';
-  const projectResult = techScreenForm.projectQuestions
-    ? calculateSectionResult(techScreenForm.projectQuestions, [0.83, 0.5, 0])
-    : 'No Pass';
-  const calcResult = getCalculatedResult(technicalResult, behavioralResult, projectResult);
+): Promise<void> => {
+  const results = getTechScreenResults(techScreenForm);
+
+  const candidateEvent = saveCandidateTechScreenData(url, BhRestToken, submission.candidate.id, results);
+  const submissionEvent = saveSubmissionTechScreenData(url, BhRestToken, submission, results);
+  const noteEvents = getTechScreenNoteEvents(url, BhRestToken, submission.candidate.id, results);
+  const notificationEvent = sendTechscreenResult(
+    submission.candidate.owner.email,
+    submission,
+    results.respondentEmail,
+    results.screenerRecommendation
+  );
+  await Promise.all([candidateEvent, submissionEvent, ...noteEvents, notificationEvent]);
+};
+
+const getTechScreenNoteEvents = (url: string, BhRestToken: string, candidateId: number, results: TechScreenResults) => {
+  const screenerDetermination = results.screenerRecommendation.split('-')[0];
+  const determinationReason = results.screenerRecommendation.split('-')[1];
+  const discrepancy = getResultDiscrepancy(
+    results.technicalResult,
+    results.behavioralResult,
+    results.projectResult,
+    screenerDetermination
+  );
+  const result = screenerDetermination === 'Fail' ? 'Failed' : 'Passed';
+  const failureReason = screenerDetermination === 'Fail' ? `\n\n Failure Reason: ${determinationReason}` : '';
+  const resultNote = `Candidate ${result} Tech Screen\n\nTech Screener: ${results.respondentEmail}${failureReason}`;
+  const resultEvent = saveCandidateNote(url, BhRestToken, candidateId, 'Tech Screen Result', resultNote);
+  const discrepancyEvent =
+    discrepancy && saveCandidateNote(url, BhRestToken, candidateId, 'Tech Screen Result Mismatch', discrepancy);
+
+  return [resultEvent, discrepancyEvent];
+};
+
+const saveSubmissionTechScreenData = async (
+  url: string,
+  BhRestToken: string,
+  submission: JobSubmission,
+  techScreenResults: TechScreenResults
+): Promise<void> => {
+  const submissionUrl = `${url}entity/JobSubmission/${submission.id}`;
+  const { respondentEmail, screenerRecommendation, totalResult } = techScreenResults;
+  const submissionStatus = deriveSubmissionStatusTS(screenerRecommendation);
+  const shouldDowngrade = shouldDowngradeJobTS(screenerRecommendation);
 
   const updateData = {
-    ...(techScreenForm.githubLink?.answer && { customText6: techScreenForm.githubLink.answer }),
-    ...(techScreenForm.onTime?.answer && { customText20: techScreenForm.onTime.answer }),
-    ...(techScreenForm.dressedProfessionally?.answer && { customText21: techScreenForm.dressedProfessionally.answer }),
-    ...(techScreenForm.communicationSkills?.answer && {
-      customText15: techScreenForm.communicationSkills.answer.split('-')[0].trim(),
+    customText18: totalResult,
+    customText19: screenerRecommendation,
+    customText20: submission.jobOrder.techScreenType,
+    customText21: respondentEmail,
+    status: submissionStatus,
+    ...(shouldDowngrade && { jobOrder: { id: submission.jobOrder.foundationsJobId } }),
+  };
+
+  await axios.post(submissionUrl, updateData, {
+    params: {
+      BhRestToken,
+    },
+  });
+};
+
+const saveCandidateTechScreenData = async (
+  url: string,
+  BhRestToken: string,
+  candidateId: number,
+  techScreenResults: TechScreenResults
+): Promise<void> => {
+  const candidateUrl = `${url}entity/Candidate/${candidateId}`;
+
+  const {
+    respondentEmail,
+    screenerRecommendation,
+    technicalResult,
+    behavioralResult,
+    projectResult,
+    totalResult,
+    githubLink,
+    onTime,
+    dressedProfessionally,
+    communicationSkills,
+  } = techScreenResults;
+
+  const screenerDetermination = screenerRecommendation.split('-')[0];
+  const candidateStatus = ['Pass', 'Smoothstack Foundations'].includes(screenerDetermination)
+    ? 'Active'
+    : screenerDetermination === 'Fail' && 'Rejected';
+
+  const updateData = {
+    ...(githubLink && { customText6: githubLink }),
+    ...(onTime && { customText20: onTime }),
+    ...(dressedProfessionally && { customText21: dressedProfessionally }),
+    ...(communicationSkills && {
+      customText15: communicationSkills.split('-')[0].trim(),
     }),
     customText16: technicalResult,
     customText17: behavioralResult,
     customText18: projectResult,
-    customText19: calcResult,
-    customText22: techScreenForm.screenerRecommendation.answer,
-    customText40: techScreenForm.respondentEmail.answer,
+    customText19: totalResult,
+    customText22: screenerRecommendation,
+    customText40: respondentEmail,
     status: candidateStatus,
   };
 
@@ -387,18 +545,50 @@ export const saveTechScreenData = async (
       BhRestToken,
     },
   });
-
-  const discrepancy = getResultDiscrepancy(technicalResult, behavioralResult, projectResult, screenerDetermination);
-  discrepancy && (await saveCandidateNote(url, BhRestToken, candidateId, 'Tech Screen Result Mismatch', discrepancy));
-
-  return screenerDetermination === 'Pass'
-    ? 'Tech Screen Passed'
-    : screenerDetermination === 'SE Recommendation'
-    ? 'SE Recommended'
-    : screenerDetermination === 'Fail' && determinationReason;
 };
 
-const calculateSectionResult = (entries: FormEntry[], threshold: any[]): string => {
+const getTechScreenResults = (techScreenForm: TechScreenForm): TechScreenResults => {
+  const respondentEmail = techScreenForm.respondentEmail.answer;
+  const screenerRecommendation = techScreenForm.screenerRecommendation.answer;
+  const technicalQuestions = Array.isArray(techScreenForm.technicalQuestions)
+    ? techScreenForm.technicalQuestions
+    : [techScreenForm.technicalQuestions];
+  const behavioralQuestions = Array.isArray(techScreenForm.behavioralQuestions)
+    ? techScreenForm.behavioralQuestions
+    : [techScreenForm.behavioralQuestions];
+  const projectQuestions = Array.isArray(techScreenForm.projectQuestions)
+    ? techScreenForm.projectQuestions
+    : [techScreenForm.projectQuestions];
+  const technicalResult = techScreenForm.technicalQuestions
+    ? calculateSectionResult(technicalQuestions, [0.8, 0.6, 0])
+    : 'No Pass';
+  const behavioralResult = techScreenForm.behavioralQuestions
+    ? calculateSectionResult(behavioralQuestions, [0.75, 0.5, 0])
+    : 'No Pass';
+  const projectResult = techScreenForm.projectQuestions
+    ? calculateSectionResult(projectQuestions, [0.83, 0.5, 0])
+    : 'No Pass';
+  const totalResult = getCalculatedResult(technicalResult, behavioralResult, projectResult);
+  const githubLink = techScreenForm.githubLink?.answer;
+  const onTime = techScreenForm.onTime?.answer;
+  const dressedProfessionally = techScreenForm.dressedProfessionally?.answer;
+  const communicationSkills = techScreenForm.communicationSkills?.answer;
+
+  return {
+    respondentEmail,
+    screenerRecommendation,
+    technicalResult,
+    behavioralResult,
+    projectResult,
+    totalResult,
+    githubLink,
+    onTime,
+    dressedProfessionally,
+    communicationSkills,
+  };
+};
+
+const calculateSectionResult = (entries: FormEntry[], threshold: number[]): string => {
   const resultCategories = ['High Pass', 'Low Pass', 'No Pass'];
   const sectionPoints = entries.length * +entries[0].question.split('(highest:')[1].match(/(\d+)/)[0];
   const totalPoints = entries.reduce((acc, e) => +e.answer.split('-')[0].trim() + acc, 0);
@@ -431,8 +621,8 @@ const getResultDiscrepancy = (
     ? `Tech Screener determination was "Pass" but Candidate failed the following section/s: "${failedSections.join(
         ','
       )}"`
-    : failedSections.includes('Behavioral') && determination === 'SE Recommendation'
-    ? 'Candidate was SE Recommended but failed Behavioral Section of Tech Screening'
+    : failedSections.includes('Behavioral') && determination === 'Smoothstack Foundations'
+    ? 'Candidate was downgraded to SF but failed Behavioral Section of Tech Screening'
     : '';
 };
 
@@ -612,14 +802,6 @@ export const saveSchedulingDataByEmail = async (
 
   let updateData: any;
   switch (type) {
-    case SchedulingType.CHALLENGE: {
-      updateData = {
-        customText28: status,
-        customText34: appointmentId,
-        customDate11: date.split('T')[0].replace(/(\d{4})\-(\d{2})\-(\d{2})/, '$2/$3/$1'),
-      };
-      break;
-    }
     case SchedulingType.WEBINAR: {
       updateData = {
         customText30: status,
@@ -627,15 +809,6 @@ export const saveSchedulingDataByEmail = async (
         customDate13: date.split('T')[0].replace(/(\d{4})\-(\d{2})\-(\d{2})/, '$2/$3/$1'),
         customTextBlock4: webinarRegistration.joinUrl,
         customText36: webinarRegistration.registrantId,
-      };
-      break;
-    }
-    case SchedulingType.TECHSCREEN: {
-      updateData = {
-        customText10: status,
-        customText39: appointmentId,
-        customDate5: date.split('T')[0].replace(/(\d{4})\-(\d{2})\-(\d{2})/, '$2/$3/$1'),
-        customTextBlock7: appointment.confirmationPage,
       };
       break;
     }
@@ -654,34 +827,96 @@ export const saveSchedulingDataByEmail = async (
 export const saveSchedulingDataBySubmissionId = async (
   url: string,
   BhRestToken: string,
+  submissionId: string,
   status: string,
   appointment: Appointment,
-  type: SchedulingType
+  type: SchedulingType,
+  submissionStatus: string
 ): Promise<JobSubmission> => {
-  const { email, datetime: date } = appointment;
-  const submissionId = email.split('@')[0];
+  const { datetime: date } = appointment;
   const submission = await fetchSubmission(url, BhRestToken, +submissionId);
   const submissionUrl = `${url}entity/JobSubmission/${submissionId}`;
 
-  const schedulingDate = status === 'canceled' ? '' : date;
   let updateData: any;
+  let eventType: any;
   switch (type) {
     case SchedulingType.CHALLENGE: {
+      eventType = `${type}(${submission.jobOrder.challengeName})`;
       updateData = {
         customText11: status,
-        customDate1: schedulingDate.split('T')[0].replace(/(\d{4})\-(\d{2})\-(\d{2})/, '$2/$3/$1'),
+        customDate1: date.split('T')[0].replace(/(\d{4})\-(\d{2})\-(\d{2})/, '$2/$3/$1'),
+        customText16: appointment.id,
+        status: submissionStatus,
+      };
+      break;
+    }
+    case SchedulingType.TECHSCREEN: {
+      eventType = `${type}(${submission.jobOrder.techScreenType})`;
+      updateData = {
+        customText22: status,
+        customDate2: date.split('T')[0].replace(/(\d{4})\-(\d{2})\-(\d{2})/, '$2/$3/$1'),
+        customText17: appointment.id,
+        status: submissionStatus,
+        customTextBlock3: appointment.confirmationPage,
       };
       break;
     }
   }
 
-  await axios.post(submissionUrl, updateData, {
+  const schedulingReq = axios.post(submissionUrl, updateData, {
     params: {
       BhRestToken,
     },
   });
-  await saveSchedulingNote(url, BhRestToken, submission.candidate.id, type, status, schedulingDate);
+  const noteReq = saveSchedulingNote(url, BhRestToken, submission.candidate.id, eventType, status, date);
+  await Promise.all([schedulingReq, noteReq]);
 
+  return submission;
+};
+
+export const saveSubmissionSchedulingDataByAppointmentId = async (
+  url: string,
+  BhRestToken: string,
+  status: string,
+  appointmentId: number,
+  date: string,
+  type: SchedulingType,
+  submissionStatus: string
+): Promise<JobSubmission> => {
+  const submission = await findSubmissionByAppointment(url, BhRestToken, appointmentId, type);
+  if (submission) {
+    const submissionUrl = `${url}entity/JobSubmission/${submission.id}`;
+
+    let updateData: any;
+    let eventType: any;
+    switch (type) {
+      case SchedulingType.CHALLENGE: {
+        eventType = `${type}(${submission.jobOrder.challengeName})`;
+        updateData = {
+          customText11: status,
+          customDate1: date.split('T')[0].replace(/(\d{4})\-(\d{2})\-(\d{2})/, '$2/$3/$1'),
+          status: submissionStatus,
+        };
+        break;
+      }
+      case SchedulingType.TECHSCREEN: {
+        eventType = `${type}(${submission.jobOrder.techScreenType})`;
+        updateData = {
+          customText22: status,
+          customDate2: date.split('T')[0].replace(/(\d{4})\-(\d{2})\-(\d{2})/, '$2/$3/$1'),
+          status: submissionStatus,
+        };
+        break;
+      }
+    }
+
+    await axios.post(submissionUrl, updateData, {
+      params: {
+        BhRestToken,
+      },
+    });
+    await saveSchedulingNote(url, BhRestToken, submission.candidate.id, eventType, status, date);
+  }
   return submission;
 };
 
@@ -700,13 +935,6 @@ export const saveSchedulingDataByAppointmentId = async (
 
     let updateData: any;
     switch (type) {
-      case SchedulingType.CHALLENGE: {
-        updateData = {
-          customText28: status,
-          customDate11: date.split('T')[0].replace(/(\d{4})\-(\d{2})\-(\d{2})/, '$2/$3/$1'),
-        };
-        break;
-      }
       case SchedulingType.WEBINAR: {
         updateData = {
           customText30: status,
@@ -764,19 +992,34 @@ export const saveSubmissionChallengeResult = async (
   BhRestToken: string,
   challengeSession: ChallengeSession,
   submissionId: number
-): Promise<void> => {
+): Promise<any> => {
   const { evaluation } = challengeSession;
   const score = Math.round((evaluation.result / evaluation.max_result) * 100);
+  const { jobOrder, candidate, challengeLink } = await fetchSubmission(url, BhRestToken, submissionId);
+  const candidateStatus = score >= jobOrder.foundationsPassingScore ? 'Active' : 'Rejected';
+  const subStatus = deriveSubmissionStatus(score, jobOrder.foundationsPassingScore);
+  const shouldDowngrade = shouldDowngradeJob(score, jobOrder.foundationsPassingScore, jobOrder.passingScore);
   const submissionUrl = `${url}entity/JobSubmission/${submissionId}`;
   const updateData = {
     customText12: score,
+    status: subStatus,
+    ...(shouldDowngrade && { jobOrder: { id: jobOrder.foundationsJobId } }),
   };
-
-  return axios.post(submissionUrl, updateData, {
-    params: {
-      BhRestToken,
-    },
-  });
+  const resultNoteTitle = shouldDowngrade
+    ? `Moved Submission from Job Id: ${jobOrder.id} to JobId: ${jobOrder.foundationsJobId} (Smoothstack Foundations)`
+    : `${subStatus} (${jobOrder.challengeName}`;
+  const resultNote = `${resultNoteTitle}\n\nChallenge Score: ${score}\n\nChallenge Link: ${challengeLink}`;
+  const updates = [
+    saveCandidateFields(url, BhRestToken, candidate.id, { status: candidateStatus }),
+    saveCandidateNote(url, BhRestToken, candidate.id, 'Challenge Result', resultNote),
+    axios.post(submissionUrl, updateData, {
+      params: {
+        BhRestToken,
+      },
+    }),
+  ];
+  await Promise.all(updates);
+  subStatus === 'Challenge Passed' && (await generateTechScreenLinks(url, BhRestToken, submissionId));
 };
 
 export const saveSubmissionChallengeSimilarity = async (
@@ -793,47 +1036,6 @@ export const saveSubmissionChallengeSimilarity = async (
     };
 
     return axios.post(submissionUrl, updateData, {
-      params: {
-        BhRestToken,
-      },
-    });
-  }
-};
-
-//TODO: To be removed
-export const saveCandidateChallengeResult = async (
-  url: string,
-  BhRestToken: string,
-  challengeSession: ChallengeSession
-): Promise<void> => {
-  const { candidate: candidateId, evaluation } = challengeSession;
-  const score = Math.round((evaluation.result / evaluation.max_result) * 100);
-  const candidateUrl = `${url}entity/Candidate/${candidateId}`;
-  const updateData = {
-    customText29: score,
-  };
-
-  return axios.post(candidateUrl, updateData, {
-    params: {
-      BhRestToken,
-    },
-  });
-};
-
-//TODO: To be removed
-export const saveCandidateChallengeSimilarity = async (
-  url: string,
-  BhRestToken: string,
-  challengeSession: ChallengeSession
-): Promise<void> => {
-  const { candidate: candidateId, similarity } = challengeSession;
-  if (similarity) {
-    const candidateUrl = `${url}entity/Candidate/${candidateId}`;
-    const updateData = {
-      customText33: similarity.text,
-    };
-
-    return axios.post(candidateUrl, updateData, {
       params: {
         BhRestToken,
       },
@@ -862,35 +1064,14 @@ export const saveCandidateLinks = async (
   BhRestToken: string,
   candidateId: number,
   webinarSchedulingLink: string,
-  preScreeningLink: string,
-  techScreenSchedulingLink: string
+  preScreeningLink: string
 ) => {
   const candidateUrl = `${url}entity/Candidate/${candidateId}`;
   const updateData = {
     customTextBlock3: webinarSchedulingLink,
     customTextBlock6: preScreeningLink,
-    customTextBlock5: techScreenSchedulingLink,
   };
   return axios.post(candidateUrl, updateData, {
-    params: {
-      BhRestToken,
-    },
-  });
-};
-
-export const saveSubmissionLinks = async (
-  url: string,
-  BhRestToken: string,
-  submissionId: number,
-  challengeLink: string,
-  challengeSchedulingLink: string
-) => {
-  const submissionUrl = `${url}entity/JobSubmission/${submissionId}`;
-  const updateData = {
-    customText10: challengeLink,
-    customTextBlock1: challengeSchedulingLink,
-  };
-  return axios.post(submissionUrl, updateData, {
     params: {
       BhRestToken,
     },
@@ -928,23 +1109,23 @@ export const fetchUpdatedSubmissions = async (url: string, BhRestToken: string):
     params: {
       BhRestToken,
       fields:
-        'id,candidate(firstName,lastName,email,phone,owner(firstName,lastName,email)),jobOrder(startDate,customDate1,salary,customFloat1),status,isDeleted',
+        'id,candidate(firstName,lastName,email,phone,owner(firstName,lastName,email)),jobOrder(startDate,salary,customFloat1,customText6),status,isDeleted',
     },
   });
 
   const submissionArr = ids.length > 1 ? data.data : [data.data];
 
   const filteredSubs = submissionArr.flatMap((sub) =>
-    !sub.isDeleted && ['Evaluation Offered', 'SE Offered'].includes(sub.status)
+    !sub.isDeleted && ['Evaluation Offered'].includes(sub.status)
       ? [
           {
             ...sub,
             jobOrder: {
               ...sub.jobOrder,
               evaluationStartDate: sub.jobOrder.startDate,
-              seStartDate: sub.jobOrder.customDate1,
               year1Salary: sub.jobOrder.salary,
               year2Salary: sub.jobOrder.customFloat1,
+              trainingLength: sub.jobOrder.customText6,
             },
           },
         ]
@@ -1003,8 +1184,9 @@ export const saveSubmissionStatus = async (
 export const fetchCandidateResume = async (
   url: string,
   BhRestToken: string,
-  candidate: Candidate
+  candidateId: number
 ): Promise<ResumeFile> => {
+  const candidate = await fetchCandidate(url, BhRestToken, candidateId);
   const resumeId = candidate.fileAttachments.find((file) => file.type === 'Resume')?.id;
   const filesUrl = `${url}file/Candidate/${candidate.id}/${resumeId}`;
 
@@ -1053,15 +1235,124 @@ export const fetchSubmission = async (
     params: {
       BhRestToken,
       fields:
-        'id,status,candidate(id,firstName,lastName,email,phone),jobOrder(customText1),dateAdded,customText15,customText10',
+        'id,status,candidate(id,firstName,lastName,email,phone,customText6,customText25,owner(email)),jobOrder(id,title,customText1,customInt1,customInt2,customInt3,customText7),dateAdded,customText15,customText10,customTextBlock2,customDate2,customText20,customText23',
     },
   });
 
-  const { customText15, customText10, ...submission } = data.data;
+  const {
+    customText15,
+    customText10,
+    customTextBlock2,
+    customDate2,
+    customText20,
+    customText17,
+    customText23,
+    ...submission
+  } = data.data;
   return {
     ...submission,
     challengeEventId: customText15,
     challengeLink: customText10,
-    jobOrder: { challengeName: submission.jobOrder.customText1 },
+    techScreenSchedulingLink: customTextBlock2,
+    techScreenDate: customDate2,
+    techScreenType: customText20,
+    techScreenEventId: customText23,
+    candidate: {
+      ...submission.candidate,
+      githubLink: submission.candidate.customText6,
+      relocation: submission.candidate.customText25,
+      owner: submission.candidate.owner,
+    },
+    jobOrder: {
+      id: submission.jobOrder.id,
+      title: submission.jobOrder.title,
+      challengeName: submission.jobOrder.customText1,
+      passingScore: submission.jobOrder.customInt1,
+      foundationsPassingScore: submission.jobOrder.customInt2,
+      foundationsJobId: submission.jobOrder.customInt3,
+      techScreenType: submission.jobOrder.customText7,
+    },
   };
+};
+
+export const findSubmissionsByPreviousChallengeId = async (
+  url: string,
+  BhRestToken: string,
+  previousChallengeId: number
+): Promise<JobSubmission[]> => {
+  const submissionQueryUrl = `${url}search/JobSubmission`;
+  const { data } = await axios.get(submissionQueryUrl, {
+    params: {
+      BhRestToken,
+      fields: 'id',
+      query: `customText14:${previousChallengeId}`,
+      count: '20',
+    },
+  });
+
+  return data.data;
+};
+
+export const saveChallengeLinks = async (
+  url: string,
+  BhRestToken: string,
+  submissionId: number,
+  linksData: ChallengeLinksData
+) => {
+  const submissionUrl = `${url}entity/JobSubmission/${submissionId}`;
+  const {
+    challengeLink,
+    challengeSchedulingLink,
+    previousChallengeId,
+    previousChallengeScore,
+    newJobOrderId,
+    submissionStatus,
+  } = linksData;
+  const updateData = {
+    customText10: challengeLink,
+    customTextBlock1: challengeSchedulingLink,
+    ...(submissionStatus && { status: submissionStatus }),
+    ...(previousChallengeId && { customText14: previousChallengeId }),
+    ...(previousChallengeScore && { customText12: previousChallengeScore }),
+    ...(newJobOrderId && { jobOrder: { id: newJobOrderId } }),
+  };
+  return axios.post(submissionUrl, updateData, {
+    params: {
+      BhRestToken,
+    },
+  });
+};
+
+export const saveTechScreenLinks = async (
+  url: string,
+  BhRestToken: string,
+  submissionId: number,
+  linksData: TechScreenLinksData
+) => {
+  const submissionUrl = `${url}entity/JobSubmission/${submissionId}`;
+  const {
+    techScreenSchedulingLink,
+    techScreenResult,
+    techScreenDate,
+    techScreenType,
+    screenerEmail,
+    screenerDetermination,
+    submissionStatus,
+    newJobOrderId,
+  } = linksData;
+  const updateData = {
+    customTextBlock2: techScreenSchedulingLink,
+    ...(submissionStatus && { status: submissionStatus }),
+    ...(techScreenResult && { customText18: techScreenResult }),
+    ...(techScreenDate && { customDate2: techScreenDate }),
+    ...(techScreenType && { customText20: techScreenType }),
+    ...(screenerEmail && { customText21: screenerEmail }),
+    ...(screenerDetermination && { customText19: screenerDetermination }),
+    ...(newJobOrderId && { jobOrder: { id: newJobOrderId } }),
+  };
+  return axios.post(submissionUrl, updateData, {
+    params: {
+      BhRestToken,
+    },
+  });
 };

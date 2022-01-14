@@ -1,5 +1,4 @@
 import { Appointment } from './Appointment';
-import { Candidate } from './Candidate';
 import { JobSubmission } from './JobSubmission';
 
 export interface AppointmentGenerationRequest {
@@ -8,15 +7,13 @@ export interface AppointmentGenerationRequest {
 }
 
 export interface TechScreenAppointmentData {
-  candidate: Candidate;
+  submission: JobSubmission;
   screenerEmail: string;
   appointment: Appointment;
-  jobTitle: string;
 }
 
 export interface ChallengeAppointmentData {
-  candidate?: Candidate; // TODO: REMOVE
-  submission?: JobSubmission;
+  submission: JobSubmission;
   appointment: Appointment;
 }
 

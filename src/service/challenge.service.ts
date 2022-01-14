@@ -1,8 +1,7 @@
 import axios from 'axios';
 import { ChallengeEvent } from 'src/model/ChallengeEvent';
 import {
-  saveCandidateChallengeResult,
-  saveCandidateChallengeSimilarity,
+  findSubmissionsByPreviousChallengeId,
   saveSubmissionChallengeResult,
   saveSubmissionChallengeSimilarity,
 } from './careers.service';
@@ -57,29 +56,24 @@ export const generateChallengeLink = async (
   return data.candidates[0].test_link;
 };
 
-//TODO: To be Removed
-export const processCandidateChallengeEvent = async ({ event, session }: ChallengeEvent) => {
-  const { restUrl, BhRestToken } = await getSessionData();
-
-  switch (event) {
-    case 'result':
-      await saveCandidateChallengeResult(restUrl, BhRestToken, session);
-      break;
-    case 'similarity':
-      await saveCandidateChallengeSimilarity(restUrl, BhRestToken, session);
-      break;
-  }
-};
-
 export const processSubmissionChallengeEvent = async ({ event, session }: ChallengeEvent, submissionId: number) => {
   const { restUrl, BhRestToken } = await getSessionData();
-
+  const prevSubmissions = await findSubmissionsByPreviousChallengeId(restUrl, BhRestToken, submissionId);
+  const submissionIds = [...prevSubmissions.map((s) => s.id), submissionId];
   switch (event) {
-    case 'result':
-      await saveSubmissionChallengeResult(restUrl, BhRestToken, session, submissionId);
+    case 'result': {
+      const submissionEvents = submissionIds.map((subId) =>
+        saveSubmissionChallengeResult(restUrl, BhRestToken, session, subId)
+      );
+      await Promise.all(submissionEvents);
       break;
-    case 'similarity':
-      await saveSubmissionChallengeSimilarity(restUrl, BhRestToken, session, submissionId);
+    }
+    case 'similarity': {
+      const submissionEvents = submissionIds.map((subId) =>
+        saveSubmissionChallengeSimilarity(restUrl, BhRestToken, session, subId)
+      );
+      await Promise.all(submissionEvents);
       break;
+    }
   }
 };

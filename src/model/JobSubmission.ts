@@ -9,4 +9,14 @@ export interface JobSubmission {
   dateAdded: number;
   challengeEventId: string;
   challengeLink: string;
+  challengeScore: string;
+  challengeSchedulingLink: string;
+  techScreenSchedulingLink: string;
+  previousChallengeId: string;
+  techScreenEventId: string;
+  techScreenDate: string;
+  techScreenType: string;
+  techScreenResult: string;
+  screenerDetermination: string;
+  screenerEmail: string;
 }
